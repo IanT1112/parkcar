@@ -1,0 +1,200 @@
+import { useEffect, useState } from "react";
+import {
+  BadgeDollarSign,
+  Clock3,
+  Save,
+} from "lucide-react";
+
+function Tarifas() {
+  const [tipoCobro, setTipoCobro] = useState(() => {
+    return localStorage.getItem("parkcar_tipo_tarifa") || "minuto";
+  });
+
+  const [precio, setPrecio] = useState(() => {
+    return localStorage.getItem("parkcar_precio_tarifa") || "0.10";
+  });
+
+  const [tolerancia, setTolerancia] = useState(() => {
+    return localStorage.getItem("parkcar_tolerancia") || "0";
+  });
+
+  const [tarifaMinima, setTarifaMinima] = useState(() => {
+    return localStorage.getItem("parkcar_tarifa_minima") || "0";
+  });
+
+  const [guardado, setGuardado] = useState(false);
+
+  useEffect(() => {
+    if (!guardado) return;
+
+    const timer = setTimeout(() => {
+      setGuardado(false);
+    }, 1800);
+
+    return () => clearTimeout(timer);
+  }, [guardado]);
+
+  const guardarTarifa = (e) => {
+    e.preventDefault();
+
+    localStorage.setItem("parkcar_tipo_tarifa", tipoCobro);
+    localStorage.setItem("parkcar_precio_tarifa", precio);
+    localStorage.setItem("parkcar_tolerancia", tolerancia);
+    localStorage.setItem("parkcar_tarifa_minima", tarifaMinima);
+
+    setGuardado(true);
+  };
+
+  return (
+    <div className="dashboard-page">
+      <header className="dashboard-header">
+        <div>
+          <p className="page-label">Configuración</p>
+          <h1>Tarifas</h1>
+          <p className="page-description">
+            Define cómo se calculará el cobro del estacionamiento.
+          </p>
+        </div>
+      </header>
+
+      <section className="tariff-grid">
+        <div className="dashboard-panel">
+          <div className="panel-header">
+            <div>
+              <h3>Configuración de cobro</h3>
+              <p>
+                Esta tarifa se aplicará automáticamente al registrar una salida.
+              </p>
+            </div>
+          </div>
+
+          <form onSubmit={guardarTarifa} className="tariff-form">
+            <div className="form-group">
+              <label>Tipo de cobro</label>
+
+              <select
+                value={tipoCobro}
+                onChange={(e) => setTipoCobro(e.target.value)}
+              >
+                <option value="minuto">
+                  Por minuto
+                </option>
+
+                <option value="hora">
+                  Por hora proporcional
+                </option>
+
+                <option value="hora_iniciada">
+                  Por hora iniciada
+                </option>
+              </select>
+            </div>
+
+            <div className="form-group">
+              <label>
+                {tipoCobro === "minuto"
+                  ? "Precio por minuto"
+                  : "Precio por hora"}
+              </label>
+
+              <div className="money-input">
+                <span>S/</span>
+
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={precio}
+                  onChange={(e) => setPrecio(e.target.value)}
+                  required
+                />
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label>Minutos de tolerancia</label>
+
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={tolerancia}
+                onChange={(e) => setTolerancia(e.target.value)}
+              />
+
+              <small className="form-help">
+                Durante este tiempo el sistema no realizará cobro.
+              </small>
+            </div>
+
+            <div className="form-group">
+              <label>Tarifa mínima</label>
+
+              <div className="money-input">
+                <span>S/</span>
+
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={tarifaMinima}
+                  onChange={(e) => setTarifaMinima(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <button type="submit" className="primary-button">
+              <Save size={18} />
+              Guardar tarifa
+            </button>
+
+            {guardado && (
+              <div className="saved-message">
+                Tarifa guardada correctamente.
+              </div>
+            )}
+          </form>
+        </div>
+
+        <div className="dashboard-panel tariff-preview">
+          <div className="tariff-preview-icon">
+            <BadgeDollarSign size={28} />
+          </div>
+
+          <p>Tarifa actual</p>
+
+          <h2>
+            S/ {Number(precio || 0).toFixed(2)}
+          </h2>
+
+          <span>
+            {tipoCobro === "minuto" && "por minuto"}
+            {tipoCobro === "hora" && "por hora proporcional"}
+            {tipoCobro === "hora_iniciada" && "por hora iniciada"}
+          </span>
+
+          <div className="tariff-example">
+            <Clock3 size={18} />
+
+            <div>
+              <strong>Ejemplo</strong>
+
+              <p>
+                {tipoCobro === "minuto" &&
+                  `30 minutos = S/ ${(Number(precio || 0) * 30).toFixed(2)}`}
+
+                {tipoCobro === "hora" &&
+                  `90 minutos = S/ ${(Number(precio || 0) * 1.5).toFixed(2)}`}
+
+                {tipoCobro === "hora_iniciada" &&
+                  `90 minutos = S/ ${(Number(precio || 0) * 2).toFixed(2)}`}
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+export default Tarifas;
