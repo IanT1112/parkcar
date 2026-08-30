@@ -2,166 +2,177 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../../lib/supabase";
 
-function Login() {
+export default function Login() {
   const navigate = useNavigate();
-
-  const [modo, setModo] = useState("login");
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-
+  const [modoRegistro, setModoRegistro] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [mensaje, setMensaje] = useState("");
-  const [cargando, setCargando] = useState(false);
+  const [mostrarPassword, setMostrarPassword] = useState(false);
 
-  const iniciarSesion = async (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-
-    setCargando(true);
+    setLoading(true);
     setMensaje("");
 
-    const { data, error } =
-      await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
+    try {
+      if (modoRegistro) {
+        const { error } = await supabase.auth.signUp({
+          email,
+          password,
+        });
 
-    setCargando(false);
+        if (error) throw error;
 
-    if (error) {
+        setMensaje(
+          "Cuenta creada. Revisa tu correo para confirmar tu registro."
+        );
+      } else {
+        const { data, error } =
+          await supabase.auth.signInWithPassword({
+            email,
+            password,
+          });
+
+        if (error) throw error;
+
+        if (data.user) {
+          navigate("/usuario");
+        }
+      }
+    } catch (error) {
       setMensaje(error.message);
-      return;
-    }
-
-    if (data.user) {
-      navigate("/usuario");
+    } finally {
+      setLoading(false);
     }
   };
 
-  const registrarse = async (e) => {
-    e.preventDefault();
-
-    setCargando(true);
-    setMensaje("");
-
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-    });
-
-    setCargando(false);
-
-    if (error) {
-      setMensaje(error.message);
-      return;
-    }
-
-    setMensaje(
-      "Registro realizado. Revisa tu correo para confirmar tu cuenta."
-    );
-  };
-
-  const handleSubmit = (e) => {
-    if (modo === "login") {
-      iniciarSesion(e);
-    } else {
-      registrarse(e);
-    }
+  const entrarVisitante = () => {
+    navigate("/usuario");
   };
 
   return (
-    <div className="login-page">
-      <div className="login-card">
-        <div className="login-header">
-          <h1>ParkCar</h1>
+    <main className="login-page">
+      <section className="login-image" aria-hidden="true">
+        <div className="login-image-fade" />
+      </section>
 
-          <p>
-            Sistema inteligente de estacionamiento
-          </p>
-        </div>
+      <section className="login-content">
+        <div className="login-box">
+          <div className="login-brand">
+            <div className="login-logo">E</div>
+            <div className="login-brand-name">ESTACIONAMIENTO</div>
+          </div>
 
-        <div className="auth-tabs">
+          <div className="login-heading">
+            <h1>
+              {modoRegistro
+                ? "Crea tu cuenta"
+                : "Bienvenido de nuevo"}
+            </h1>
+
+            <p>
+              {modoRegistro
+                ? "Regístrate para comenzar"
+                : "Inicia sesión para continuar"}
+            </p>
+          </div>
+
+          <form onSubmit={handleSubmit} className="login-form">
+            <div className="login-input">
+              <span className="login-input-icon">✉</span>
+
+              <input
+                type="email"
+                placeholder="Correo electrónico"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+              />
+            </div>
+
+            <div className="login-input">
+              <span className="login-input-icon">⌑</span>
+
+              <input
+                type={mostrarPassword ? "text" : "password"}
+                placeholder="Contraseña"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                minLength={6}
+              />
+
+              <button
+                type="button"
+                className="password-toggle"
+                onClick={() =>
+                  setMostrarPassword((actual) => !actual)
+                }
+                aria-label={
+                  mostrarPassword
+                    ? "Ocultar contraseña"
+                    : "Mostrar contraseña"
+                }
+              >
+                {mostrarPassword ? "◉" : "○"}
+              </button>
+            </div>
+
+            {mensaje && (
+              <div className="login-message">{mensaje}</div>
+            )}
+
+            <button
+              type="submit"
+              className="login-primary"
+              disabled={loading}
+            >
+              {loading
+                ? "Procesando..."
+                : modoRegistro
+                  ? "Crear cuenta"
+                  : "Iniciar sesión"}
+            </button>
+          </form>
+
           <button
             type="button"
-            className={
-              modo === "login"
-                ? "auth-tab active"
-                : "auth-tab"
-            }
+            className="change-mode"
             onClick={() => {
-              setModo("login");
+              setModoRegistro((actual) => !actual);
               setMensaje("");
             }}
           >
-            Iniciar sesión
+            {modoRegistro
+              ? "¿Ya tienes una cuenta? Inicia sesión"
+              : "¿No tienes una cuenta? Regístrate"}
           </button>
+
+          <div className="login-divider">
+            <span />
+            <p>o continúa como</p>
+            <span />
+          </div>
 
           <button
             type="button"
-            className={
-              modo === "registro"
-                ? "auth-tab active"
-                : "auth-tab"
-            }
-            onClick={() => {
-              setModo("registro");
-              setMensaje("");
-            }}
+            className="login-guest"
+            onClick={entrarVisitante}
           >
-            Crear cuenta
+            Ingresar como visitante
           </button>
+
+          <footer className="login-footer">
+            <div>
+              <strong>Tu información está protegida</strong>
+              <span>ParkCar · Acceso seguro</span>
+            </div>
+          </footer>
         </div>
-
-        <form onSubmit={handleSubmit}>
-          <div className="form-group">
-            <label>Correo electrónico</label>
-
-            <input
-              type="email"
-              placeholder="correo@ejemplo.com"
-              value={email}
-              onChange={(e) =>
-                setEmail(e.target.value)
-              }
-              required
-            />
-          </div>
-
-          <div className="form-group">
-            <label>Contraseña</label>
-
-            <input
-              type="password"
-              placeholder="Mínimo 6 caracteres"
-              value={password}
-              onChange={(e) =>
-                setPassword(e.target.value)
-              }
-              minLength={6}
-              required
-            />
-          </div>
-
-          <button
-            type="submit"
-            className="login-button"
-            disabled={cargando}
-          >
-            {cargando
-              ? "Procesando..."
-              : modo === "login"
-              ? "Iniciar sesión"
-              : "Crear cuenta"}
-          </button>
-        </form>
-
-        {mensaje && (
-          <div className="auth-message">
-            {mensaje}
-          </div>
-        )}
-      </div>
-    </div>
+      </section>
+    </main>
   );
 }
-
-export default Login;
