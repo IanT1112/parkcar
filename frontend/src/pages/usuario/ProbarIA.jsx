@@ -1,20 +1,27 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  ArrowLeft,
   Camera,
   Upload,
   ScanLine,
   CircleDot,
   Image as ImageIcon,
 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 
 import { supabase } from "../../lib/supabase";
 import { authenticatedFetch } from "../../lib/api";
 
 function ProbarIA() {
+  const navigate = useNavigate();
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
+  const streamRef = useRef(null);
+  const cameraScreenActiveRef = useRef(false);
+  const cameraRequestIdRef = useRef(0);
   const ultimaPlacaGuardadaRef = useRef(null);
   const requestInFlightRef = useRef(false);
+  const enviarFrameRef = useRef(null);
 
   const [stream, setStream] = useState(null);
   const [imagen, setImagen] = useState(null);
@@ -39,10 +46,12 @@ function ProbarIA() {
   });
 
   useEffect(() => {
+    cameraScreenActiveRef.current = true;
     iniciarCamara();
 
     return () => {
-      detenerCamara();
+      cameraScreenActiveRef.current = false;
+      detenerCamara(false);
     };
   }, []);
 
@@ -50,66 +59,145 @@ function ProbarIA() {
     if (!stream) return;
 
     const intervalo = setInterval(() => {
-      enviarFrame();
+      enviarFrameRef.current?.();
     }, 2000);
 
     return () => clearInterval(intervalo);
   }, [stream]);
 
+  useEffect(() => {
+    enviarFrameRef.current = enviarFrame;
+  });
+
   const guardarPrueba = async (resultado) => {
-    try {
-      setGuardandoPrueba(true);
+  try {
+    setGuardandoPrueba(true);
 
-      const {
-        data: { user },
-        error: userError,
-      } = await supabase.auth.getUser();
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
 
-      if (userError || !user) {
-        console.error(
-          "No hay usuario autenticado:",
-          userError
-        );
-
-        return;
-      }
-
-      const { error: insertError } = await supabase
-        .from("pruebas")
-        .insert({
-          user_id: user.id,
-          placa: resultado.placa,
-          color: resultado.color || null,
-          tipo_vehiculo:
-            resultado.tipo_vehiculo || null,
-          confianza:
-            resultado.confianza ?? null,
-        });
-
-      if (insertError) {
-        console.error(
-          "Error guardando prueba:",
-          insertError
-        );
-
-        return;
-      }
-
-      console.log(
-        "Prueba guardada en Supabase:",
-        resultado.placa
-      );
-    } catch (err) {
+    if (userError || !user) {
       console.error(
-        "Error inesperado guardando prueba:",
-        err
+        "No hay usuario autenticado:",
+        userError
       );
-    } finally {
-      setGuardandoPrueba(false);
+      return;
+    }
+
+    const placaNormalizada = resultado.placa
+      ?.trim()
+      .toUpperCase();
+
+    if (!placaNormalizada) {
+      console.error("No hay una placa válida para registrar.");
+      return;
+    }
+
+    // 1. Verificamos si esta placa ya está dentro
+    const {
+      data: estanciaExistente,
+      error: consultaError,
+    } = await supabase
+      .from("estancias")
+      .select("id, placa")
+      .eq("user_id", user.id)
+      .eq("placa", placaNormalizada)
+      .eq("estado", "dentro")
+      .maybeSingle();
+
+    if (consultaError) {
+      console.error(
+        "Error comprobando estancia:",
+        consultaError
+      );
+      return;
+    }
+
+    if (estanciaExistente) {
+      console.log(
+        "El vehículo ya se encuentra dentro:",
+        placaNormalizada
+      );
+      return;
+    }
+
+    // 2. Guardamos la detección en pruebas
+    const {
+      data: prueba,
+      error: insertError,
+    } = await supabase
+      .from("pruebas")
+      .insert({
+        user_id: user.id,
+        placa: placaNormalizada,
+        color: resultado.color || null,
+        tipo_vehiculo:
+          resultado.tipo_vehiculo || null,
+        confianza:
+          resultado.confianza ?? null,
+      })
+      .select("id")
+      .single();
+
+    if (insertError) {
+      console.error(
+        "Error guardando prueba:",
+        insertError
+      );
+      return;
+    }
+
+    console.log(
+      "Prueba guardada:",
+      placaNormalizada
+    );
+
+    // 3. Creamos automáticamente la entrada
+    const {
+      error: estanciaError,
+    } = await supabase
+      .from("estancias")
+      .insert({
+        user_id: user.id,
+        prueba_id: prueba.id,
+        placa: placaNormalizada,
+        color: resultado.color || null,
+        tipo_vehiculo:
+          resultado.tipo_vehiculo || null,
+        confianza:
+          resultado.confianza ?? null,
+        estado: "dentro",
+      });
+
+    if (estanciaError) {
+      console.error(
+        "Error creando estancia:",
+        estanciaError
+      );
+      return;
+    }
+
+    console.log(
+      "Entrada registrada automáticamente:",
+      placaNormalizada
+    );
+
+    setEstado("Vehículo registrado");
+  } catch (err) {
+    console.error(
+      "Error inesperado registrando vehículo:",
+      err
+    );
+  } finally {
+    setGuardandoPrueba(false);
     }
   };
 
   async function iniciarCamara() {
+    const requestId = ++cameraRequestIdRef.current;
+
     try {
       setError("");
       setImagen(null);
@@ -127,6 +215,15 @@ function ProbarIA() {
           audio: false,
         });
 
+      if (
+        !cameraScreenActiveRef.current ||
+        requestId !== cameraRequestIdRef.current
+      ) {
+        mediaStream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+
+      streamRef.current = mediaStream;
       setStream(mediaStream);
       setEstado("Buscando vehículo...");
 
@@ -135,6 +232,13 @@ function ProbarIA() {
           mediaStream;
       }
     } catch (err) {
+      if (
+        !cameraScreenActiveRef.current ||
+        requestId !== cameraRequestIdRef.current
+      ) {
+        return;
+      }
+
       console.error(err);
 
       setEstado("Cámara no disponible");
@@ -145,19 +249,31 @@ function ProbarIA() {
     }
   }
 
-  function detenerCamara() {
-    if (stream) {
-      stream.getTracks().forEach((track) => {
+  function detenerCamara(actualizarEstado = true) {
+    cameraRequestIdRef.current += 1;
+
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => {
         track.stop();
       });
+
+      streamRef.current = null;
     }
 
     if (videoRef.current) {
       videoRef.current.srcObject = null;
     }
 
-    setStream(null);
+    if (actualizarEstado) {
+      setStream(null);
+    }
   }
+
+  const retroceder = () => {
+    cameraScreenActiveRef.current = false;
+    detenerCamara();
+    navigate(-1);
+  };
 
   const procesarResultadoCamara = (data) => {
     setResultadoIA((actual) => ({
@@ -557,6 +673,16 @@ function ProbarIA() {
               placa sea visible.
             </p>
           </div>
+
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={retroceder}
+            aria-label="Retroceder y apagar la cámara"
+          >
+            <ArrowLeft size={18} />
+            Volver
+          </button>
         </header>
 
         <section className="ai-live-layout">

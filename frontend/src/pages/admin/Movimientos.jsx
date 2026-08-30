@@ -7,142 +7,276 @@ import {
   Search,
 } from "lucide-react";
 
-function Movimientos() {
-  const [vehiculos, setVehiculos] = useState(() => {
-    try {
-      const guardados = localStorage.getItem("parkcar_vehiculos");
-      return guardados ? JSON.parse(guardados) : [];
-    } catch {
-      return [];
-    }
-  });
+import { supabase } from "../../lib/supabase";
 
-  const [historial, setHistorial] = useState(() => {
-    try {
-      const guardados = localStorage.getItem("parkcar_historial");
-      return guardados ? JSON.parse(guardados) : [];
-    } catch {
-      return [];
-    }
-  });
+function Movimientos() {
+  const [vehiculosDentro, setVehiculosDentro] = useState([]);
+  const [historial, setHistorial] = useState([]);
+  const [tarifa, setTarifa] = useState(null);
 
   const [busqueda, setBusqueda] = useState("");
+  const [cargando, setCargando] = useState(true);
+  const [procesandoSalida, setProcesandoSalida] = useState(null);
+  const [error, setError] = useState("");
+
+  async function cargarDatos() {
+    try {
+      setCargando(true);
+      setError("");
+
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
+
+      if (userError || !user) {
+        throw new Error("No hay usuario autenticado.");
+      }
+
+      const [
+        { data: dentroData, error: dentroError },
+        { data: historialData, error: historialError },
+        { data: tarifaData, error: tarifaError },
+      ] = await Promise.all([
+        supabase
+          .from("estancias")
+          .select("*")
+          .eq("user_id", user.id)
+          .eq("estado", "dentro")
+          .order("hora_entrada", {
+            ascending: false,
+          }),
+
+        supabase
+          .from("estancias")
+          .select("*")
+          .eq("user_id", user.id)
+          .eq("estado", "finalizado")
+          .order("hora_salida", {
+            ascending: false,
+          }),
+
+        supabase
+          .from("tarifas")
+          .select(
+            "tipo_cobro, precio, tolerancia, tarifa_minima"
+          )
+          .eq("user_id", user.id)
+          .maybeSingle(),
+      ]);
+
+      if (dentroError) {
+        throw dentroError;
+      }
+
+      if (historialError) {
+        throw historialError;
+      }
+
+      if (tarifaError) {
+        throw tarifaError;
+      }
+
+      setVehiculosDentro(dentroData || []);
+      setHistorial(historialData || []);
+      setTarifa(tarifaData || null);
+    } catch (err) {
+      console.error("Error cargando movimientos:", err);
+
+      setError(
+        "No se pudieron cargar los movimientos."
+      );
+    } finally {
+      setCargando(false);
+    }
+  }
 
   useEffect(() => {
-    localStorage.setItem(
-      "parkcar_vehiculos",
-      JSON.stringify(vehiculos)
+    const inicioCarga = setTimeout(cargarDatos, 0);
+    return () => clearTimeout(inicioCarga);
+  }, []);
+
+  const vehiculosFiltrados = useMemo(() => {
+    return vehiculosDentro.filter((vehiculo) =>
+      vehiculo.placa
+        ?.toLowerCase()
+        .includes(busqueda.toLowerCase())
     );
-  }, [vehiculos]);
+  }, [vehiculosDentro, busqueda]);
 
-  useEffect(() => {
-    localStorage.setItem(
-      "parkcar_historial",
-      JSON.stringify(historial)
-    );
-  }, [historial]);
+  const calcularPrecio = (minutos) => {
+    if (!tarifa) {
+      return 0;
+    }
 
-  const vehiculosDentro = useMemo(() => {
-    return vehiculos.filter(
-      (vehiculo) =>
-        vehiculo.estado === "Dentro" &&
-        vehiculo.placa
-          .toLowerCase()
-          .includes(busqueda.toLowerCase())
-    );
-  }, [vehiculos, busqueda]);
-
-  const registrarSalida = (vehiculo) => {
-    const ahora = new Date();
-    const entrada = new Date(vehiculo.entrada);
-
-    const diferenciaMs = ahora - entrada;
-    const minutos = Math.max(
-      1,
-      Math.floor(diferenciaMs / 60000)
-    );
-
-    const tipoTarifa =
-    localStorage.getItem("parkcar_tipo_tarifa") || "minuto";
-
-    const precioTarifa =
-    Number(localStorage.getItem("parkcar_precio_tarifa")) || 0;
-
+    const tipoTarifa = tarifa.tipo_cobro;
+    const precioTarifa = Number(tarifa.precio) || 0;
     const tolerancia =
-    Number(localStorage.getItem("parkcar_tolerancia")) || 0;
-
+      Number(tarifa.tolerancia) || 0;
     const tarifaMinima =
-    Number(localStorage.getItem("parkcar_tarifa_minima")) || 0;
+      Number(tarifa.tarifa_minima) || 0;
 
     let precioTotal = 0;
 
     if (minutos > tolerancia) {
-    const minutosCobrables = minutos - tolerancia;
+      const minutosCobrables =
+        minutos - tolerancia;
 
-    if (tipoTarifa === "minuto") {
-        precioTotal = minutosCobrables * precioTarifa;
-    }
+      if (tipoTarifa === "minuto") {
+        precioTotal =
+          minutosCobrables * precioTarifa;
+      }
 
-    if (tipoTarifa === "hora") {
-        precioTotal = (minutosCobrables / 60) * precioTarifa;
-    }
+      if (tipoTarifa === "hora") {
+        precioTotal =
+          (minutosCobrables / 60) *
+          precioTarifa;
+      }
 
-    if (tipoTarifa === "hora_iniciada") {
-        const horasCobrables = Math.ceil(minutosCobrables / 60);
-        precioTotal = horasCobrables * precioTarifa;
-    }
+      if (tipoTarifa === "hora_iniciada") {
+        const horasCobrables = Math.ceil(
+          minutosCobrables / 60
+        );
 
-    if (precioTotal < tarifaMinima) {
+        precioTotal =
+          horasCobrables * precioTarifa;
+      }
+
+      if (
+        precioTotal < tarifaMinima
+      ) {
         precioTotal = tarifaMinima;
+      }
     }
+
+    return Number(precioTotal.toFixed(2));
+  };
+
+  const registrarSalida = async (vehiculo) => {
+    try {
+      setProcesandoSalida(vehiculo.id);
+      setError("");
+
+      if (!tarifa) {
+        setError(
+          "Primero debes configurar una tarifa."
+        );
+        return;
+      }
+
+      const ahora = new Date();
+      const entrada = new Date(
+        vehiculo.hora_entrada
+      );
+
+      const diferenciaMs =
+        ahora.getTime() - entrada.getTime();
+
+      const minutos = Math.max(
+        1,
+        Math.floor(
+          diferenciaMs / 60000
+        )
+      );
+
+      const precioTotal =
+        calcularPrecio(minutos);
+
+      const confirmar = window.confirm(
+        `Registrar salida de ${vehiculo.placa}?\n\n` +
+          `Tiempo: ${formatearDuracion(minutos)}\n` +
+          `Total: S/ ${precioTotal.toFixed(2)}`
+      );
+
+      if (!confirmar) {
+        return;
+      }
+
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
+
+      if (userError || !user) {
+        throw new Error(
+          "No hay usuario autenticado."
+        );
+      }
+
+      const {
+        data: estanciaActualizada,
+        error: salidaError,
+      } = await supabase
+        .from("estancias")
+        .update({
+          hora_salida:
+            ahora.toISOString(),
+          duracion_minutos: minutos,
+          precio_total: precioTotal,
+          estado_pago: "pendiente",
+          estado: "finalizado",
+        })
+        .eq("id", vehiculo.id)
+        .eq("user_id", user.id)
+        .select()
+        .single();
+
+      if (salidaError) {
+        throw salidaError;
+      }
+
+      setVehiculosDentro((prev) =>
+        prev.filter(
+          (item) =>
+            item.id !== vehiculo.id
+        )
+      );
+
+      setHistorial((prev) => [
+        estanciaActualizada,
+        ...prev,
+      ]);
+    } catch (err) {
+      console.error(
+        "Error registrando salida:",
+        err
+      );
+
+      setError(
+        "No se pudo registrar la salida."
+      );
+    } finally {
+      setProcesandoSalida(null);
     }
-
-    precioTotal = Number(precioTotal.toFixed(2));
-
-    const registroSalida = {
-    id: crypto.randomUUID(),
-    vehiculoId: vehiculo.id,
-    placa: vehiculo.placa,
-    color: vehiculo.color,
-    entrada: vehiculo.entrada,
-    salida: ahora.toISOString(),
-    duracionMinutos: minutos,
-    precioTotal,
-    estadoPago: "Pendiente",
-    estado: "Finalizado",
-    };
-
-    setHistorial((prev) => [
-      registroSalida,
-      ...prev,
-    ]);
-
-    setVehiculos((prev) =>
-      prev.map((item) =>
-        item.id === vehiculo.id
-          ? {
-              ...item,
-              estado: "Fuera",
-              salida: ahora.toISOString(),
-            }
-          : item
-      )
-    );
   };
 
   const formatearFechaHora = (fecha) => {
-    return new Date(fecha).toLocaleString("es-PE", {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
+    if (!fecha) {
+      return "-";
+    }
+
+    return new Date(fecha).toLocaleString(
+      "es-PE",
+      {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      }
+    );
   };
 
   const formatearDuracion = (minutos) => {
-    const horas = Math.floor(minutos / 60);
-    const minutosRestantes = minutos % 60;
+    const totalMinutos =
+      Number(minutos) || 0;
+
+    const horas = Math.floor(
+      totalMinutos / 60
+    );
+
+    const minutosRestantes =
+      totalMinutos % 60;
 
     if (horas === 0) {
       return `${minutosRestantes} min`;
@@ -151,17 +285,80 @@ function Movimientos() {
     return `${horas} h ${minutosRestantes} min`;
   };
 
+  const textoTarifa = () => {
+    if (!tarifa) {
+      return "Sin tarifa configurada";
+    }
+
+    const precio = Number(
+      tarifa.precio || 0
+    ).toFixed(2);
+
+    if (
+      tarifa.tipo_cobro === "minuto"
+    ) {
+      return `S/ ${precio} por minuto`;
+    }
+
+    if (
+      tarifa.tipo_cobro === "hora"
+    ) {
+      return `S/ ${precio} por hora proporcional`;
+    }
+
+    if (
+      tarifa.tipo_cobro ===
+      "hora_iniciada"
+    ) {
+      return `S/ ${precio} por hora iniciada`;
+    }
+
+    return "-";
+  };
+
+  if (cargando) {
+    return (
+      <div className="dashboard-page">
+        <section className="dashboard-panel">
+          <p>
+            Cargando entradas y salidas...
+          </p>
+        </section>
+      </div>
+    );
+  }
+
   return (
     <div className="dashboard-page">
       <header className="dashboard-header">
         <div>
-          <p className="page-label">Control</p>
-          <h1>Entradas y salidas</h1>
+          <p className="page-label">
+            Control
+          </p>
+
+          <h1>
+            Entradas y salidas
+          </h1>
+
           <p className="page-description">
-            Gestiona los vehículos actualmente dentro y revisa el historial.
+            Gestiona los vehículos actualmente
+            dentro y revisa el historial.
+          </p>
+
+          <p className="page-description">
+            Tarifa actual:{" "}
+            <strong>
+              {textoTarifa()}
+            </strong>
           </p>
         </div>
       </header>
+
+      {error && (
+        <div className="ai-error-message">
+          {error}
+        </div>
+      )}
 
       <section className="movement-summary-grid">
         <article className="movement-summary-card">
@@ -170,8 +367,13 @@ function Movimientos() {
           </div>
 
           <div>
-            <span>Vehículos dentro</span>
-            <strong>{vehiculosDentro.length}</strong>
+            <span>
+              Vehículos dentro
+            </span>
+
+            <strong>
+              {vehiculosDentro.length}
+            </strong>
           </div>
         </article>
 
@@ -181,8 +383,13 @@ function Movimientos() {
           </div>
 
           <div>
-            <span>Salidas registradas</span>
-            <strong>{historial.length}</strong>
+            <span>
+              Salidas registradas
+            </span>
+
+            <strong>
+              {historial.length}
+            </strong>
           </div>
         </article>
       </section>
@@ -190,34 +397,45 @@ function Movimientos() {
       <section className="dashboard-panel movement-panel">
         <div className="vehicles-toolbar">
           <div>
-            <h3>Vehículos dentro</h3>
+            <h3>
+              Vehículos dentro
+            </h3>
+
             <p>
-              Selecciona un vehículo para registrar su salida.
+              Selecciona un vehículo para
+              registrar su salida.
             </p>
           </div>
 
           <div className="search-box">
             <Search size={18} />
+
             <input
               type="text"
               placeholder="Buscar por placa..."
               value={busqueda}
               onChange={(e) =>
-                setBusqueda(e.target.value)
+                setBusqueda(
+                  e.target.value
+                )
               }
             />
           </div>
         </div>
 
-        {vehiculosDentro.length === 0 ? (
+        {vehiculosFiltrados.length === 0 ? (
           <div className="empty-state">
             <div className="empty-icon">
               <Car size={28} />
             </div>
 
-            <h3>No hay vehículos dentro</h3>
+            <h3>
+              No hay vehículos dentro
+            </h3>
+
             <p>
-              Los vehículos registrados como entrada aparecerán aquí.
+              Los vehículos registrados
+              mediante IA aparecerán aquí.
             </p>
           </div>
         ) : (
@@ -227,6 +445,7 @@ function Movimientos() {
                 <tr>
                   <th>Placa</th>
                   <th>Color</th>
+                  <th>Tipo</th>
                   <th>Entrada</th>
                   <th>Estado</th>
                   <th>Acción</th>
@@ -234,22 +453,35 @@ function Movimientos() {
               </thead>
 
               <tbody>
-                {vehiculosDentro.map(
+                {vehiculosFiltrados.map(
                   (vehiculo) => (
                     <tr key={vehiculo.id}>
                       <td>
                         <div className="vehicle-plate">
-                          {vehiculo.placa}
+                          {
+                            vehiculo.placa
+                          }
                         </div>
                       </td>
 
-                      <td>{vehiculo.color}</td>
+                      <td>
+                        {vehiculo.color ||
+                          "-"}
+                      </td>
+
+                      <td>
+                        {vehiculo.tipo_vehiculo ||
+                          "-"}
+                      </td>
 
                       <td>
                         <div className="time-cell">
-                          <Clock3 size={15} />
+                          <Clock3
+                            size={15}
+                          />
+
                           {formatearFechaHora(
-                            vehiculo.entrada
+                            vehiculo.hora_entrada
                           )}
                         </div>
                       </td>
@@ -263,12 +495,24 @@ function Movimientos() {
                       <td>
                         <button
                           className="exit-button"
+                          disabled={
+                            procesandoSalida ===
+                            vehiculo.id
+                          }
                           onClick={() =>
-                            registrarSalida(vehiculo)
+                            registrarSalida(
+                              vehiculo
+                            )
                           }
                         >
-                          <LogOut size={17} />
-                          Registrar salida
+                          <LogOut
+                            size={17}
+                          />
+
+                          {procesandoSalida ===
+                          vehiculo.id
+                            ? "Procesando..."
+                            : "Registrar salida"}
                         </button>
                       </td>
                     </tr>
@@ -283,9 +527,13 @@ function Movimientos() {
       <section className="dashboard-panel movement-history">
         <div className="panel-header">
           <div>
-            <h3>Historial de salidas</h3>
+            <h3>
+              Historial de salidas
+            </h3>
+
             <p>
-              Vehículos que ya finalizaron su estancia.
+              Vehículos que ya finalizaron
+              su estancia.
             </p>
           </div>
         </div>
@@ -293,7 +541,8 @@ function Movimientos() {
         {historial.length === 0 ? (
           <div className="empty-state compact-empty">
             <p>
-              Todavía no hay salidas registradas.
+              Todavía no hay salidas
+              registradas.
             </p>
           </div>
         ) : (
@@ -307,49 +556,73 @@ function Movimientos() {
                   <th>Salida</th>
                   <th>Tiempo</th>
                   <th>Total</th>
-                    <th>Pago</th>
+                  <th>Pago</th>
                 </tr>
               </thead>
 
-                <tbody>
-                {historial.map((movimiento) => (
-                    <tr key={movimiento.id}>
-                    <td>
+              <tbody>
+                {historial.map(
+                  (movimiento) => (
+                    <tr
+                      key={
+                        movimiento.id
+                      }
+                    >
+                      <td>
                         <div className="vehicle-plate">
-                        {movimiento.placa}
+                          {
+                            movimiento.placa
+                          }
                         </div>
-                    </td>
+                      </td>
 
-                    <td>{movimiento.color}</td>
+                      <td>
+                        {movimiento.color ||
+                          "-"}
+                      </td>
 
-                    <td>
-                        {formatearFechaHora(movimiento.entrada)}
-                    </td>
+                      <td>
+                        {formatearFechaHora(
+                          movimiento.hora_entrada
+                        )}
+                      </td>
 
-                    <td>
-                        {formatearFechaHora(movimiento.salida)}
-                    </td>
+                      <td>
+                        {formatearFechaHora(
+                          movimiento.hora_salida
+                        )}
+                      </td>
 
-                    <td>
+                      <td>
                         <strong>
-                        {formatearDuracion(movimiento.duracionMinutos)}
+                          {formatearDuracion(
+                            movimiento.duracion_minutos
+                          )}
                         </strong>
-                    </td>
+                      </td>
 
-                    <td>
+                      <td>
                         <strong>
-                        S/ {Number(movimiento.precioTotal || 0).toFixed(2)}
+                          S/{" "}
+                          {Number(
+                            movimiento.precio_total ||
+                              0
+                          ).toFixed(2)}
                         </strong>
-                    </td>
+                      </td>
 
-                    <td>
+                      <td>
                         <span className="payment-pending-badge">
-                        {movimiento.estadoPago || "Pendiente"}
+                          {movimiento.estado_pago ===
+                          "pagado"
+                            ? "Pagado"
+                            : "Pendiente"}
                         </span>
-                    </td>
+                      </td>
                     </tr>
-                ))}
-                </tbody>
+                  )
+                )}
+              </tbody>
             </table>
           </div>
         )}

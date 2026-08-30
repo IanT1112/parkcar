@@ -2,83 +2,115 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Car,
   Search,
-  Plus,
-  X,
   Clock3,
   CircleCheck,
 } from "lucide-react";
 
+import { supabase } from "../../lib/supabase";
+
 function Vehiculos() {
-  const [vehiculos, setVehiculos] = useState(() => {
-    const guardados = localStorage.getItem("parkcar_vehiculos");
-
-    return guardados ? JSON.parse(guardados) : [];
-  });
-
+  const [vehiculos, setVehiculos] = useState([]);
   const [busqueda, setBusqueda] = useState("");
-  const [mostrarModal, setMostrarModal] = useState(false);
+  const [cargando, setCargando] = useState(true);
+  const [error, setError] = useState("");
+  const [actualizacionTiempo, setActualizacionTiempo] = useState(
+    () => Date.now()
+  );
 
-  const [placa, setPlaca] = useState("");
-  const [color, setColor] = useState("");
+  // Actualiza visualmente los cronómetros cada minuto.
+  useEffect(() => {
+    const intervalo = setInterval(() => {
+      setActualizacionTiempo(Date.now());
+    }, 60000);
+
+    return () => clearInterval(intervalo);
+  }, []);
+
+  async function cargarVehiculos() {
+    try {
+      setCargando(true);
+      setError("");
+
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
+
+      if (userError || !user) {
+        throw new Error("No hay una sesión activa.");
+      }
+
+      const { data, error: estanciasError } =
+        await supabase
+          .from("estancias")
+          .select(`
+            id,
+            placa,
+            color,
+            tipo_vehiculo,
+            confianza,
+            hora_entrada,
+            hora_salida,
+            duracion_minutos,
+            precio_total,
+            estado_pago,
+            estado,
+            created_at
+          `)
+          .eq("user_id", user.id)
+          .order("hora_entrada", {
+            ascending: false,
+          });
+
+      if (estanciasError) {
+        throw estanciasError;
+      }
+
+      setVehiculos(data || []);
+    } catch (err) {
+      console.error(
+        "Error cargando vehículos:",
+        err
+      );
+
+      setError(
+        "No se pudieron cargar los vehículos."
+      );
+    } finally {
+      setCargando(false);
+    }
+  }
 
   useEffect(() => {
-    localStorage.setItem(
-      "parkcar_vehiculos",
-      JSON.stringify(vehiculos)
-    );
-  }, [vehiculos]);
-
-  const registrarVehiculo = (e) => {
-    e.preventDefault();
-
-    const placaNormalizada = placa
-      .trim()
-      .toUpperCase();
-
-    if (!placaNormalizada || !color) {
-      return;
-    }
-
-    const yaEstaDentro = vehiculos.some(
-      (vehiculo) =>
-        vehiculo.placa === placaNormalizada &&
-        vehiculo.estado === "Dentro"
-    );
-
-    if (yaEstaDentro) {
-      alert("Este vehículo ya está registrado dentro del estacionamiento.");
-      return;
-    }
-
-    const ahora = new Date();
-
-    const nuevoVehiculo = {
-      id: crypto.randomUUID(),
-      placa: placaNormalizada,
-      color,
-      entrada: ahora.toISOString(),
-      estado: "Dentro",
-    };
-
-    setVehiculos((prev) => [
-      nuevoVehiculo,
-      ...prev,
-    ]);
-
-    setPlaca("");
-    setColor("");
-    setMostrarModal(false);
-  };
+    const inicioCarga = setTimeout(cargarVehiculos, 0);
+    return () => clearTimeout(inicioCarga);
+  }, []);
 
   const vehiculosFiltrados = useMemo(() => {
     return vehiculos.filter((vehiculo) =>
       vehiculo.placa
-        .toLowerCase()
+        ?.toLowerCase()
         .includes(busqueda.toLowerCase())
     );
   }, [vehiculos, busqueda]);
 
+  const vehiculosDentro = useMemo(() => {
+    return vehiculos.filter(
+      (vehiculo) =>
+        vehiculo.estado === "dentro"
+    );
+  }, [vehiculos]);
+
+  const vehiculosFinalizados = useMemo(() => {
+    return vehiculos.filter(
+      (vehiculo) =>
+        vehiculo.estado === "finalizado"
+    );
+  }, [vehiculos]);
+
   const formatearHora = (fecha) => {
+    if (!fecha) return "-";
+
     return new Date(fecha).toLocaleTimeString(
       "es-PE",
       {
@@ -89,6 +121,8 @@ function Vehiculos() {
   };
 
   const formatearFecha = (fecha) => {
+    if (!fecha) return "-";
+
     return new Date(fecha).toLocaleDateString(
       "es-PE",
       {
@@ -99,9 +133,53 @@ function Vehiculos() {
     );
   };
 
-  const totalDentro = vehiculos.filter(
-    (vehiculo) => vehiculo.estado === "Dentro"
-  ).length;
+  const formatearDuracion = (minutos) => {
+    const totalMinutos = Number(minutos) || 0;
+
+    const horas = Math.floor(
+      totalMinutos / 60
+    );
+
+    const minutosRestantes =
+      totalMinutos % 60;
+
+    if (horas === 0) {
+      return `${minutosRestantes} min`;
+    }
+
+    return `${horas} h ${minutosRestantes} min`;
+  };
+
+  const calcularTiempo = (vehiculo) => {
+    // Si el vehículo ya salió, usamos la duración
+    // guardada al registrar la salida.
+    if (vehiculo.estado === "finalizado") {
+      return formatearDuracion(
+        vehiculo.duracion_minutos
+      );
+    }
+
+    // Si sigue dentro, calculamos desde hora_entrada
+    // hasta el momento actual.
+    const inicio = new Date(
+      vehiculo.hora_entrada
+    ).getTime();
+
+    const ahora = actualizacionTiempo;
+
+    const diferencia = Math.max(
+      0,
+      ahora - inicio
+    );
+
+    const minutosTotales = Math.floor(
+      diferencia / 60000
+    );
+
+    return formatearDuracion(
+      minutosTotales
+    );
+  };
 
   return (
     <div className="dashboard-page">
@@ -115,17 +193,9 @@ function Vehiculos() {
 
           <p className="page-description">
             Controla los vehículos registrados
-            actualmente en ParkCar.
+            en tu estacionamiento.
           </p>
         </div>
-
-        <button
-          className="primary-button"
-          onClick={() => setMostrarModal(true)}
-        >
-          <Plus size={18} />
-          Registrar entrada
-        </button>
       </header>
 
       <section className="vehicle-summary-grid">
@@ -136,7 +206,10 @@ function Vehiculos() {
 
           <div>
             <span>Vehículos dentro</span>
-            <strong>{totalDentro}</strong>
+
+            <strong>
+              {vehiculosDentro.length}
+            </strong>
           </div>
         </article>
 
@@ -146,8 +219,11 @@ function Vehiculos() {
           </div>
 
           <div>
-            <span>Registros totales</span>
-            <strong>{vehiculos.length}</strong>
+            <span>Estancias finalizadas</span>
+
+            <strong>
+              {vehiculosFinalizados.length}
+            </strong>
           </div>
         </article>
       </section>
@@ -155,10 +231,13 @@ function Vehiculos() {
       <section className="dashboard-panel">
         <div className="vehicles-toolbar">
           <div>
-            <h3>Vehículos registrados</h3>
+            <h3>
+              Vehículos registrados
+            </h3>
 
             <p>
-              Vehículos detectados o registrados manualmente.
+              Historial de vehículos registrados
+              mediante ParkCar.
             </p>
           </div>
 
@@ -176,16 +255,29 @@ function Vehiculos() {
           </div>
         </div>
 
-        {vehiculosFiltrados.length === 0 ? (
+        {cargando ? (
+          <div className="empty-state">
+            <p>
+              Cargando vehículos...
+            </p>
+          </div>
+        ) : error ? (
+          <div className="empty-state">
+            <p>{error}</p>
+          </div>
+        ) : vehiculosFiltrados.length === 0 ? (
           <div className="empty-state">
             <div className="empty-icon">
               <Car size={28} />
             </div>
 
-            <h3>No hay vehículos registrados</h3>
+            <h3>
+              No hay vehículos registrados
+            </h3>
 
             <p>
-              Registra una entrada para comenzar.
+              Registra un vehículo con la IA
+              para comenzar.
             </p>
           </div>
         ) : (
@@ -194,9 +286,12 @@ function Vehiculos() {
               <thead>
                 <tr>
                   <th>Placa</th>
+                  <th>Vehículo</th>
                   <th>Color</th>
                   <th>Fecha</th>
                   <th>Hora entrada</th>
+                  <th>Hora salida</th>
+                  <th>Tiempo</th>
                   <th>Estado</th>
                 </tr>
               </thead>
@@ -212,12 +307,18 @@ function Vehiculos() {
                       </td>
 
                       <td>
-                        {vehiculo.color}
+                        {vehiculo.tipo_vehiculo ||
+                          "-"}
+                      </td>
+
+                      <td>
+                        {vehiculo.color ||
+                          "-"}
                       </td>
 
                       <td>
                         {formatearFecha(
-                          vehiculo.entrada
+                          vehiculo.hora_entrada
                         )}
                       </td>
 
@@ -226,15 +327,36 @@ function Vehiculos() {
                           <Clock3 size={15} />
 
                           {formatearHora(
-                            vehiculo.entrada
+                            vehiculo.hora_entrada
                           )}
                         </div>
                       </td>
 
                       <td>
-                        <span className="status-badge">
-                          {vehiculo.estado}
-                        </span>
+                        {vehiculo.hora_salida
+                          ? formatearHora(
+                              vehiculo.hora_salida
+                            )
+                          : "-"}
+                      </td>
+
+                      <td>
+                        {calcularTiempo(
+                          vehiculo
+                        )}
+                      </td>
+
+                      <td>
+                        {vehiculo.estado ===
+                        "dentro" ? (
+                          <span className="status-badge">
+                            Dentro
+                          </span>
+                        ) : (
+                          <span className="payment-paid-badge">
+                            Finalizado
+                          </span>
+                        )}
                       </td>
                     </tr>
                   )
@@ -244,132 +366,6 @@ function Vehiculos() {
           </div>
         )}
       </section>
-
-      {mostrarModal && (
-        <div className="modal-overlay">
-          <div className="modal-card">
-            <div className="modal-header">
-              <div>
-                <p className="page-label">
-                  Nueva entrada
-                </p>
-
-                <h2>
-                  Registrar vehículo
-                </h2>
-              </div>
-
-              <button
-                className="close-button"
-                onClick={() =>
-                  setMostrarModal(false)
-                }
-              >
-                <X size={20} />
-              </button>
-            </div>
-
-            <form
-              onSubmit={registrarVehiculo}
-              className="vehicle-form"
-            >
-              <div className="form-group">
-                <label>Placa</label>
-
-                <input
-                  type="text"
-                  placeholder="Ej. T4P-381"
-                  value={placa}
-                  onChange={(e) =>
-                    setPlaca(e.target.value)
-                  }
-                  maxLength={10}
-                  required
-                />
-              </div>
-
-              <div className="form-group">
-                <label>
-                  Color del vehículo
-                </label>
-
-                <select
-                  value={color}
-                  onChange={(e) =>
-                    setColor(e.target.value)
-                  }
-                  required
-                >
-                  <option value="">
-                    Selecciona un color
-                  </option>
-
-                  <option value="Negro">
-                    Negro
-                  </option>
-
-                  <option value="Blanco">
-                    Blanco
-                  </option>
-
-                  <option value="Gris">
-                    Gris
-                  </option>
-
-                  <option value="Plata">
-                    Plata
-                  </option>
-
-                  <option value="Rojo">
-                    Rojo
-                  </option>
-
-                  <option value="Azul">
-                    Azul
-                  </option>
-
-                  <option value="Verde">
-                    Verde
-                  </option>
-
-                  <option value="Amarillo">
-                    Amarillo
-                  </option>
-
-                  <option value="Otro">
-                    Otro
-                  </option>
-                </select>
-              </div>
-
-              <div className="modal-info">
-                La fecha y hora de entrada se
-                registrarán automáticamente.
-              </div>
-
-              <div className="modal-actions">
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={() =>
-                    setMostrarModal(false)
-                  }
-                >
-                  Cancelar
-                </button>
-
-                <button
-                  type="submit"
-                  className="primary-button"
-                >
-                  <Plus size={18} />
-                  Registrar entrada
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

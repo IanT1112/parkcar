@@ -1,4 +1,4 @@
-import { NavLink, Outlet } from "react-router-dom";
+import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard,
   Car,
@@ -7,16 +7,23 @@ import {
   BadgeDollarSign,
   Settings,
   LogOut,
+  ArrowLeft,
 } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+
 import { supabase } from "../lib/supabase";
 
 function AdminLayout() {
   const navigate = useNavigate();
+
+  const volverPanelPrincipal = () => {
+    navigate("/usuario");
+  };
+
   const cerrarSesion = async () => {
     await supabase.auth.signOut();
     navigate("/login", { replace: true });
   };
+
   const menu = [
     {
       name: "Dashboard",
@@ -56,7 +63,7 @@ function AdminLayout() {
       <aside className="sidebar">
         <div className="sidebar-logo">
           <div className="logo-icon">
-            <Car size={26} />
+            <img src="/favicon-32x32.png" alt="" />
           </div>
 
           <div>
@@ -75,7 +82,9 @@ function AdminLayout() {
                 to={item.path}
                 end={item.end}
                 className={({ isActive }) =>
-                  `sidebar-link ${isActive ? "active" : ""}`
+                  `sidebar-link ${
+                    isActive ? "active" : ""
+                  }`
                 }
               >
                 <Icon size={20} />
@@ -86,7 +95,20 @@ function AdminLayout() {
         </nav>
 
         <div className="sidebar-footer">
-          <button type="button" className="sidebar-link logout-link" onClick={cerrarSesion}>
+          <button
+            type="button"
+            className="sidebar-link"
+            onClick={volverPanelPrincipal}
+          >
+            <ArrowLeft size={20} />
+            <span>Volver al panel principal</span>
+          </button>
+
+          <button
+            type="button"
+            className="sidebar-link logout-link"
+            onClick={cerrarSesion}
+          >
             <LogOut size={20} />
             <span>Cerrar sesión</span>
           </button>

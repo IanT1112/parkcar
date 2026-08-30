@@ -6,81 +6,197 @@ import {
   CheckCircle2,
 } from "lucide-react";
 
-function Pagos() {
-  const [historial, setHistorial] = useState(() => {
-    try {
-      const guardados = localStorage.getItem("parkcar_historial");
-      return guardados ? JSON.parse(guardados) : [];
-    } catch {
-      return [];
-    }
-  });
+import { supabase } from "../../lib/supabase";
 
+function Pagos() {
+  const [pagos, setPagos] = useState([]);
   const [busqueda, setBusqueda] = useState("");
+  const [cargando, setCargando] = useState(true);
+  const [procesandoPago, setProcesandoPago] = useState(null);
+  const [error, setError] = useState("");
+
+  async function cargarPagos() {
+    try {
+      setCargando(true);
+      setError("");
+
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
+
+      if (userError || !user) {
+        throw new Error("No hay usuario autenticado.");
+      }
+
+      const { data, error: pagosError } = await supabase
+        .from("estancias")
+        .select(
+          `
+            id,
+            placa,
+            color,
+            hora_entrada,
+            hora_salida,
+            duracion_minutos,
+            precio_total,
+            estado_pago,
+            metodo_pago,
+            fecha_pago,
+            estado
+          `
+        )
+        .eq("user_id", user.id)
+        .eq("estado", "finalizado")
+        .order("hora_salida", {
+          ascending: false,
+        });
+
+      if (pagosError) {
+        throw pagosError;
+      }
+
+      setPagos(data || []);
+    } catch (err) {
+      console.error("Error cargando pagos:", err);
+
+      setError(
+        "No se pudieron cargar los pagos."
+      );
+    } finally {
+      setCargando(false);
+    }
+  }
 
   useEffect(() => {
-    localStorage.setItem(
-      "parkcar_historial",
-      JSON.stringify(historial)
-    );
-  }, [historial]);
+    const inicioCarga = setTimeout(cargarPagos, 0);
+    return () => clearTimeout(inicioCarga);
+  }, []);
 
   const pagosFiltrados = useMemo(() => {
-    return historial.filter((item) =>
+    return pagos.filter((item) =>
       item.placa
-        .toLowerCase()
+        ?.toLowerCase()
         .includes(busqueda.toLowerCase())
     );
-  }, [historial, busqueda]);
+  }, [pagos, busqueda]);
 
-  const pendientes = historial.filter(
-    (item) => item.estadoPago !== "Pagado"
+  const pendientes = pagos.filter(
+    (item) => item.estado_pago !== "pagado"
   );
 
-  const pagados = historial.filter(
-    (item) => item.estadoPago === "Pagado"
+  const pagados = pagos.filter(
+    (item) => item.estado_pago === "pagado"
   );
 
   const totalCobrado = pagados.reduce(
     (total, item) =>
-      total + Number(item.precioTotal || 0),
+      total + Number(item.precio_total || 0),
     0
   );
 
-  const registrarPagoEfectivo = (id) => {
-    const fechaPago = new Date().toISOString();
+  const registrarPagoEfectivo = async (pago) => {
+    try {
+      setProcesandoPago(pago.id);
+      setError("");
 
-    setHistorial((prev) =>
-      prev.map((item) =>
-        item.id === id
-          ? {
-              ...item,
-              estadoPago: "Pagado",
-              metodoPago: "Efectivo",
-              fechaPago,
-            }
-          : item
-      )
-    );
+      const confirmar = window.confirm(
+        `Registrar pago de ${pago.placa}?\n\n` +
+          `Total: S/ ${Number(
+            pago.precio_total || 0
+          ).toFixed(2)}\n` +
+          `Método: Efectivo`
+      );
+
+      if (!confirmar) {
+        return;
+      }
+
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
+
+      if (userError || !user) {
+        throw new Error(
+          "No hay usuario autenticado."
+        );
+      }
+
+      const fechaPago = new Date().toISOString();
+
+      const {
+        data: pagoActualizado,
+        error: pagoError,
+      } = await supabase
+        .from("estancias")
+        .update({
+          estado_pago: "pagado",
+          metodo_pago: "Efectivo",
+          fecha_pago: fechaPago,
+        })
+        .eq("id", pago.id)
+        .eq("user_id", user.id)
+        .select()
+        .single();
+
+      if (pagoError) {
+        throw pagoError;
+      }
+
+      setPagos((prev) =>
+        prev.map((item) =>
+          item.id === pago.id
+            ? pagoActualizado
+            : item
+        )
+      );
+    } catch (err) {
+      console.error(
+        "Error registrando pago:",
+        err
+      );
+
+      setError(
+        "No se pudo registrar el pago."
+      );
+    } finally {
+      setProcesandoPago(null);
+    }
   };
 
   const formatearFechaHora = (fecha) => {
     if (!fecha) return "-";
 
-    return new Date(fecha).toLocaleString("es-PE", {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
+    return new Date(fecha).toLocaleString(
+      "es-PE",
+      {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      }
+    );
   };
+
+  if (cargando) {
+    return (
+      <div className="dashboard-page">
+        <section className="dashboard-panel">
+          <p>Cargando pagos...</p>
+        </section>
+      </div>
+    );
+  }
 
   return (
     <div className="dashboard-page">
       <header className="dashboard-header">
         <div>
-          <p className="page-label">Finanzas</p>
+          <p className="page-label">
+            Finanzas
+          </p>
 
           <h1>Pagos</h1>
 
@@ -90,6 +206,12 @@ function Pagos() {
         </div>
       </header>
 
+      {error && (
+        <div className="ai-error-message">
+          {error}
+        </div>
+      )}
+
       <section className="payment-summary-grid">
         <article className="payment-summary-card">
           <div className="payment-summary-icon">
@@ -98,7 +220,9 @@ function Pagos() {
 
           <div>
             <span>Pagos pendientes</span>
-            <strong>{pendientes.length}</strong>
+            <strong>
+              {pendientes.length}
+            </strong>
           </div>
         </article>
 
@@ -109,7 +233,9 @@ function Pagos() {
 
           <div>
             <span>Pagos realizados</span>
-            <strong>{pagados.length}</strong>
+            <strong>
+              {pagados.length}
+            </strong>
           </div>
         </article>
 
@@ -120,6 +246,7 @@ function Pagos() {
 
           <div>
             <span>Total cobrado</span>
+
             <strong>
               S/ {totalCobrado.toFixed(2)}
             </strong>
@@ -130,7 +257,9 @@ function Pagos() {
       <section className="dashboard-panel">
         <div className="vehicles-toolbar">
           <div>
-            <h3>Movimientos de pago</h3>
+            <h3>
+              Movimientos de pago
+            </h3>
 
             <p>
               Registros pendientes y pagos realizados.
@@ -157,7 +286,9 @@ function Pagos() {
               <CreditCard size={28} />
             </div>
 
-            <h3>No hay pagos registrados</h3>
+            <h3>
+              No hay pagos registrados
+            </h3>
 
             <p>
               Los vehículos que registren salida aparecerán aquí.
@@ -178,66 +309,79 @@ function Pagos() {
               </thead>
 
               <tbody>
-                {pagosFiltrados.map((pago) => (
-                  <tr key={pago.id}>
-                    <td>
-                      <div className="vehicle-plate">
-                        {pago.placa}
-                      </div>
-                    </td>
+                {pagosFiltrados.map(
+                  (pago) => (
+                    <tr key={pago.id}>
+                      <td>
+                        <div className="vehicle-plate">
+                          {pago.placa}
+                        </div>
+                      </td>
 
-                    <td>
-                      {formatearFechaHora(pago.salida)}
-                    </td>
+                      <td>
+                        {formatearFechaHora(
+                          pago.hora_salida
+                        )}
+                      </td>
 
-                    <td>
-                      <strong>
-                        S/{" "}
-                        {Number(
-                          pago.precioTotal || 0
-                        ).toFixed(2)}
-                      </strong>
-                    </td>
+                      <td>
+                        <strong>
+                          S/{" "}
+                          {Number(
+                            pago.precio_total || 0
+                          ).toFixed(2)}
+                        </strong>
+                      </td>
 
-                    <td>
-                      {pago.estadoPago === "Pagado" ? (
-                        <span className="payment-paid-badge">
-                          Pagado
-                        </span>
-                      ) : (
-                        <span className="payment-pending-badge">
-                          Pendiente
-                        </span>
-                      )}
-                    </td>
+                      <td>
+                        {pago.estado_pago ===
+                        "pagado" ? (
+                          <span className="payment-paid-badge">
+                            Pagado
+                          </span>
+                        ) : (
+                          <span className="payment-pending-badge">
+                            Pendiente
+                          </span>
+                        )}
+                      </td>
 
-                    <td>
-                      {pago.metodoPago || "-"}
-                    </td>
+                      <td>
+                        {pago.metodo_pago || "-"}
+                      </td>
 
-                    <td>
-                      {pago.estadoPago === "Pagado" ? (
-                        <span className="payment-date">
-                          {formatearFechaHora(
-                            pago.fechaPago
-                          )}
-                        </span>
-                      ) : (
-                        <button
-                          className="cash-button"
-                          onClick={() =>
-                            registrarPagoEfectivo(
-                              pago.id
-                            )
-                          }
-                        >
-                          <Banknote size={17} />
-                          Cobrar efectivo
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
+                      <td>
+                        {pago.estado_pago ===
+                        "pagado" ? (
+                          <span className="payment-date">
+                            {formatearFechaHora(
+                              pago.fecha_pago
+                            )}
+                          </span>
+                        ) : (
+                          <button
+                            className="cash-button"
+                            disabled={
+                              procesandoPago === pago.id
+                            }
+                            onClick={() =>
+                              registrarPagoEfectivo(
+                                pago
+                              )
+                            }
+                          >
+                            <Banknote size={17} />
+
+                            {procesandoPago ===
+                            pago.id
+                              ? "Procesando..."
+                              : "Cobrar efectivo"}
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                )}
               </tbody>
             </table>
           </div>

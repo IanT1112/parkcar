@@ -62,8 +62,12 @@ export default function Login() {
       <section className="login-content">
         <div className="login-box">
           <div className="login-brand">
-            <div className="login-logo">E</div>
-            <div className="login-brand-name">ESTACIONAMIENTO</div>
+            <img
+              className="login-logo"
+              src="/favicon-32x32.png"
+              alt="ParkCar"
+            />
+            <div className="login-brand-name">PARKCAR</div>
           </div>
 
           <div className="login-heading">

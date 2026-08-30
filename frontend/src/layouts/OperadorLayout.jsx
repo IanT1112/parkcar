@@ -44,7 +44,7 @@ function OperadorLayout() {
       <aside className="sidebar">
         <div className="sidebar-logo">
           <div className="logo-icon">
-            <Car size={26} />
+            <img src="/favicon-32x32.png" alt="" />
           </div>
 
           <div>

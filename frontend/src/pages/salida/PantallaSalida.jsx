@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import {
-  Car,
   Clock3,
   CreditCard,
   CheckCircle2,
@@ -56,7 +55,7 @@ function PantallaSalida() {
   if (!ultimoMovimiento) {
     return (
       <div className="exit-screen empty-exit-screen">
-        <Car size={64} />
+        <img className="exit-empty-logo" src="/favicon-32x32.png" alt="ParkCar" />
 
         <h1>ParkCar</h1>
 
@@ -71,7 +70,7 @@ function PantallaSalida() {
     <div className="exit-screen">
       <div className="exit-container">
         <div className="exit-brand">
-          <Car size={32} />
+          <img src="/favicon-32x32.png" alt="" />
           <span>ParkCar</span>
         </div>
 
